@@ -31,7 +31,7 @@ echo "Found $FASTA_COUNT FASTA files"
 
 # Run the pipeline
 echo "Starting pipeline execution..."
-nextflow run nextflow_tapir_poppunk_snp.nf \
+./nextflow run nextflow_tapir_poppunk_snp.nf \
     --input "$INPUT_DIR" \
     --resultsDir "$OUTPUT_DIR" \
     -with-report "$OUTPUT_DIR/execution_report.html" \

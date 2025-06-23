@@ -41,7 +41,7 @@ This pipeline performs:
 ./setup_ubuntu_docker.sh
 
 # Then run the pipeline with Ubuntu Docker profile
-nextflow run nextflow_tapir_poppunk_snp.nf -profile ubuntu_docker --input ./assemblies --resultsDir ./results
+./nextflow run nextflow_tapir_poppunk_snp.nf -profile ubuntu_docker --input ./assemblies --resultsDir ./results
 ```
 
 **For Google Cloud Batch execution:**
@@ -50,7 +50,7 @@ nextflow run nextflow_tapir_poppunk_snp.nf -profile ubuntu_docker --input ./asse
 ./run_google_batch.sh
 
 # Or manually:
-nextflow run nextflow_tapir_poppunk_snp.nf -profile google_batch \
+./nextflow run nextflow_tapir_poppunk_snp.nf -profile google_batch \
     --input gs://aphlhq-ngs-gh/nextflow_data/subset_100 \
     --resultsDir gs://aphlhq-ngs-gh/nextflow_data/subset_100_results \
     -w gs://aphlhq-ngs-gh/nextflow_work
@@ -58,7 +58,7 @@ nextflow run nextflow_tapir_poppunk_snp.nf -profile google_batch \
 
 **Standard local usage:**
 ```bash
-nextflow run nextflow_tapir_poppunk_snp.nf --input ./assemblies --resultsDir ./results
+./nextflow run nextflow_tapir_poppunk_snp.nf --input ./assemblies --resultsDir ./results
 ```
 
 ### Input Requirements
@@ -83,7 +83,7 @@ nextflow run nextflow_tapir_poppunk_snp.nf --input ./assemblies --resultsDir ./r
 ### Example
 ```bash
 # Run with custom thread allocation
-nextflow run nextflow_tapir_poppunk_snp.nf \
+./nextflow run nextflow_tapir_poppunk_snp.nf \
     --input ./my_assemblies \
     --resultsDir ./my_results \
     --poppunk_threads 12 \
@@ -109,10 +109,10 @@ The pipeline supports multiple execution environments:
 ### Profile Usage
 ```bash
 # Local Ubuntu
-nextflow run nextflow_tapir_poppunk_snp.nf -profile ubuntu_docker --input ./assemblies --resultsDir ./results
+./nextflow run nextflow_tapir_poppunk_snp.nf -profile ubuntu_docker --input ./assemblies --resultsDir ./results
 
 # Google Cloud
-nextflow run nextflow_tapir_poppunk_snp.nf -profile google_batch --input gs://bucket/input --resultsDir gs://bucket/results
+./nextflow run nextflow_tapir_poppunk_snp.nf -profile google_batch --input gs://bucket/input --resultsDir gs://bucket/results
 ```
 
 ## Output Structure
@@ -173,10 +173,10 @@ If PopPUNK crashes with "Segmentation fault" when processing many files (>400):
 **For persistent segmentation faults:**
 ```bash
 # Use ultra-conservative settings (automatically applied for >450 files)
-nextflow run nextflow_tapir_poppunk_snp.nf --input ./assemblies --resultsDir ./results
+./nextflow run nextflow_tapir_poppunk_snp.nf --input ./assemblies --resultsDir ./results
 
 # Alternative: Use chunked approach for extremely large datasets
-nextflow run poppunk_chunked_alternative.nf --input ./assemblies --resultsDir ./results --chunk_size 200
+./nextflow run poppunk_chunked_alternative.nf --input ./assemblies --resultsDir ./results --chunk_size 200
 ```
 
 **Monitor progress:**
@@ -196,10 +196,10 @@ If you encounter Docker mount errors like "Mounts denied", "path not shared", or
 2. **Choose the appropriate profile:**
    ```bash
    # Recommended for Ubuntu
-   nextflow run nextflow_tapir_poppunk_snp.nf -profile ubuntu_docker --input ./assemblies --resultsDir ./results
+   ./nextflow run nextflow_tapir_poppunk_snp.nf -profile ubuntu_docker --input ./assemblies --resultsDir ./results
    
    # Alternative if still having mount issues
-   nextflow run nextflow_tapir_poppunk_snp.nf -profile local_tmp --input ./assemblies --resultsDir ./results
+   ./nextflow run nextflow_tapir_poppunk_snp.nf -profile local_tmp --input ./assemblies --resultsDir ./results
    ```
 
 3. **Check Docker permissions:**
@@ -217,7 +217,7 @@ For Google Cloud execution problems, see `GOOGLE_CLOUD_SETUP.md` for detailed tr
 
 ### Help
 ```bash
-nextflow run nextflow_tapir_poppunk_snp.nf --help
+./nextflow run nextflow_tapir_poppunk_snp.nf --help
 ```
 
 ## Performance Notes

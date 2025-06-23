@@ -1,0 +1,11 @@
+./nextflow run nextflow_tapir_poppunk_snp_chunked.nf \
+    -profile google_batch \
+    --input $INPUT_BUCKET \
+    --resultsDir $OUTPUT_BUCKET \
+    --chunk_size $CHUNK_SIZE \
+    -w $WORK_DIR \
+    -with-report "${OUTPUT_BUCKET}/reports/pipeline_report.html" \
+    -with-timeline "${OUTPUT_BUCKET}/reports/timeline.html" \
+    -with-trace "${OUTPUT_BUCKET}/reports/trace.txt" \
+    -with-dag "${OUTPUT_BUCKET}/reports/dag.html" \
+    -resume

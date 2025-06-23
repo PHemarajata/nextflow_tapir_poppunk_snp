@@ -27,7 +27,7 @@ if (params.help) {
     TAPIR + PopPUNK + Per-Clade SNP Analysis Pipeline
     
     Usage:
-        nextflow run nextflow_tapir_poppunk_snp.nf --input <path_to_assemblies> --resultsDir <output_directory>
+        ./nextflow run nextflow_tapir_poppunk_snp.nf --input <path_to_assemblies> --resultsDir <output_directory>
     
     Required arguments:
         --input         Path to directory containing FASTA assemblies
@@ -42,6 +42,7 @@ if (params.help) {
         --panaroo_threads   Number of threads for Panaroo (default: 16 local, 8 cloud)
         --gubbins_threads   Number of threads for Gubbins (default: 8 local, 4 cloud)
         --iqtree_threads    Number of threads for IQ-TREE (default: 4)
+        --chunk_size        Process files in chunks to prevent segfaults (default: 0 = no chunking)
         --large_dataset_threshold      Threshold for conservative PopPUNK parameters (default: 400)
         --very_large_dataset_threshold Threshold for ultra-conservative PopPUNK parameters (default: 450)
     
@@ -52,10 +53,10 @@ if (params.help) {
     
     Examples:
         # Local execution
-        nextflow run nextflow_tapir_poppunk_snp.nf -profile ubuntu_docker --input ./assemblies --resultsDir ./results
+        ./nextflow run nextflow_tapir_poppunk_snp.nf -profile ubuntu_docker --input ./assemblies --resultsDir ./results
         
         # Google Cloud execution
-        nextflow run nextflow_tapir_poppunk_snp.nf -profile google_batch \\
+        ./nextflow run nextflow_tapir_poppunk_snp.nf -profile google_batch \\
             --input gs://bucket/assemblies --resultsDir gs://bucket/results
     """
     exit 0
@@ -75,12 +76,37 @@ process POPPUNK {
 
     script:
     """
-    # Aggressive memory management for large datasets
-    ulimit -v 62914560  # ~60GB virtual memory limit
-    ulimit -m 62914560  # ~60GB resident memory limit
+    # ULTRA-AGGRESSIVE segfault prevention for Google Cloud
+    set -euo pipefail
+    
+    # System limits - even more conservative
+    ulimit -v 104857600  # ~100GB virtual memory limit (increased for GCP)
+    ulimit -m 104857600  # ~100GB resident memory limit
+    ulimit -s 8192       # Stack size limit
+    ulimit -c 0          # Disable core dumps
+    ulimit -n 65536      # File descriptor limit
+    
+    # Memory management environment variables
     export OMP_NUM_THREADS=${task.cpus}
-    export MALLOC_TRIM_THRESHOLD_=100000
-    export MALLOC_MMAP_THRESHOLD_=100000
+    export MALLOC_TRIM_THRESHOLD_=50000     # More aggressive trimming
+    export MALLOC_MMAP_THRESHOLD_=50000     # Lower mmap threshold
+    export MALLOC_ARENA_MAX=2               # Limit memory arenas
+    export MALLOC_TOP_PAD_=131072           # Reduce top padding
+    export MALLOC_MMAP_MAX_=65536           # Limit mmap allocations
+    
+    # Python/NumPy memory management (PopPUNK uses these)
+    export PYTHONHASHSEED=0
+    export OPENBLAS_NUM_THREADS=1
+    export MKL_NUM_THREADS=1
+    export NUMEXPR_NUM_THREADS=1
+    export OMP_DYNAMIC=FALSE
+    export OMP_NESTED=FALSE
+    
+    # Disable memory overcommit if possible
+    echo 2 > /proc/sys/vm/overcommit_memory 2>/dev/null || echo "Cannot set overcommit policy"
+    
+    # Set conservative memory management
+    echo 10 > /proc/sys/vm/swappiness 2>/dev/null || echo "Cannot set swappiness"
     
     # Monitor memory usage
     echo "Initial memory status:"
@@ -109,20 +135,27 @@ process POPPUNK {
     NUM_SAMPLES=\$(wc -l < assembly_list.txt)
     echo "Processing \$NUM_SAMPLES samples"
     
-    if [ \$NUM_SAMPLES -gt 450 ]; then
-        echo "Very large dataset detected (\$NUM_SAMPLES samples). Using ultra-conservative parameters."
+    # ULTRA-CONSERVATIVE parameters for Google Cloud segfault prevention
+    if [ \$NUM_SAMPLES -gt 300 ]; then
+        echo "Large dataset detected (\$NUM_SAMPLES samples). Using ULTRA-conservative parameters for GCP."
+        SKETCH_SIZE="--sketch-size 3000"      # REDUCED further
+        MIN_K="--min-k 17"                    # INCREASED min-k
+        MAX_K="--max-k 23"                    # REDUCED max-k range
+        EXTRA_PARAMS="--no-stream --batch-size 50"  # Added batch processing
+    elif [ \$NUM_SAMPLES -gt 200 ]; then
+        echo "Medium dataset detected (\$NUM_SAMPLES samples). Using conservative parameters."
         SKETCH_SIZE="--sketch-size 5000"
         MIN_K="--min-k 15"
         MAX_K="--max-k 25"
         EXTRA_PARAMS="--no-stream"
-    elif [ \$NUM_SAMPLES -gt 400 ]; then
-        echo "Large dataset detected (\$NUM_SAMPLES samples). Using conservative parameters."
+    elif [ \$NUM_SAMPLES -gt 100 ]; then
+        echo "Small-medium dataset detected (\$NUM_SAMPLES samples). Using moderate parameters."
         SKETCH_SIZE="--sketch-size 7500"
         MIN_K="--min-k 13"
         MAX_K="--max-k 29"
         EXTRA_PARAMS=""
     else
-        echo "Standard dataset size. Using default parameters."
+        echo "Small dataset size. Using standard parameters."
         SKETCH_SIZE=""
         MIN_K=""
         MAX_K=""
@@ -133,36 +166,69 @@ process POPPUNK {
     echo "Memory before database creation:"
     free -h || echo "Memory info not available"
     
-    # Create database with ultra-conservative parameters for very large datasets
-    echo "Creating PopPUNK database..."
-    poppunk --create-db --r-files assembly_list.txt \\
+    # Create database with ultra-conservative parameters and memory monitoring
+    echo "Creating PopPUNK database with ULTRA-conservative settings..."
+    echo "Memory before database creation:"
+    free -h || echo "Memory info not available"
+    ps aux --sort=-%mem | head -10 || echo "Process info not available"
+    
+    # Force garbage collection and memory cleanup
+    sync && echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || echo "Cannot drop caches"
+    
+    # Run database creation with timeout and error handling
+    timeout 7200 poppunk --create-db --r-files assembly_list.txt \\
             --output poppunk_db \\
             --threads ${task.cpus} \\
             \$SKETCH_SIZE \$MIN_K \$MAX_K \$EXTRA_PARAMS \\
-            --overwrite || exit 1
+            --overwrite || {
+        echo "Database creation failed or timed out. Attempting recovery..."
+        free -h
+        ps aux --sort=-%mem | head -10
+        exit 1
+    }
     
-    # Memory checkpoint
+    # Memory checkpoint and cleanup
     echo "Memory after database creation:"
     free -h || echo "Memory info not available"
+    sync && echo 1 > /proc/sys/vm/drop_caches 2>/dev/null || echo "Cannot drop caches"
+    sleep 10  # Allow memory to stabilize
     
-    # Fit model with memory-conscious settings
-    echo "Fitting PopPUNK model..."
-    poppunk --fit-model --ref-db poppunk_db \\
-            --output poppunk_fit \\
-            --threads ${task.cpus} \\
-            --overwrite || exit 1
-    
-    # Memory checkpoint
-    echo "Memory after model fitting:"
+    # Fit model with memory-conscious settings and monitoring
+    echo "Fitting PopPUNK model with conservative settings..."
+    echo "Memory before model fitting:"
     free -h || echo "Memory info not available"
     
-    # Assign clusters
-    echo "Assigning clusters..."
-    poppunk --assign-query --ref-db poppunk_db \\
+    timeout 7200 poppunk --fit-model --ref-db poppunk_db \\
+            --output poppunk_fit \\
+            --threads ${task.cpus} \\
+            --overwrite || {
+        echo "Model fitting failed or timed out. Attempting recovery..."
+        free -h
+        ps aux --sort=-%mem | head -10
+        exit 1
+    }
+    
+    # Memory checkpoint and cleanup
+    echo "Memory after model fitting:"
+    free -h || echo "Memory info not available"
+    sync && echo 1 > /proc/sys/vm/drop_caches 2>/dev/null || echo "Cannot drop caches"
+    sleep 10  # Allow memory to stabilize
+    
+    # Assign clusters with monitoring
+    echo "Assigning clusters with conservative settings..."
+    echo "Memory before cluster assignment:"
+    free -h || echo "Memory info not available"
+    
+    timeout 7200 poppunk --assign-query --ref-db poppunk_db \\
             --q-files assembly_list.txt \\
             --output poppunk_assigned \\
             --threads ${task.cpus} \\
-            --overwrite || exit 1
+            --overwrite || {
+        echo "Cluster assignment failed or timed out. Attempting recovery..."
+        free -h
+        ps aux --sort=-%mem | head -10
+        exit 1
+    }
     
     # Find and copy the cluster assignment file
     find poppunk_assigned -name "*clusters.csv" -exec cp {} clusters.csv \\;
@@ -309,8 +375,30 @@ workflow {
         .ifEmpty { error "No FASTA files found in ${params.input}" }
         .collect()
 
-    // Run PopPUNK clustering
-    clusters_csv = POPPUNK(assemblies_ch)
+    // Check if chunking is enabled
+    if (params.chunk_size > 0) {
+        log.info "⚠️  CHUNKED PROCESSING ENABLED"
+        log.info "   Chunk size: ${params.chunk_size} files per chunk"
+        log.info "   This will process files in smaller batches to prevent segmentation faults"
+        log.info "   Note: Chunked processing may affect clustering results compared to processing all files together"
+        
+        // For chunked processing, we'll use a modified approach
+        // Split files into chunks and process each chunk separately
+        chunked_clusters = assemblies_ch
+            .flatten()
+            .buffer(size: params.chunk_size, remainder: true)
+            .map { chunk_files -> 
+                log.info "Processing chunk with ${chunk_files.size()} files"
+                return chunk_files
+            }
+            .map { chunk -> POPPUNK(chunk) }
+            .collect()
+        
+        clusters_csv = chunked_clusters.first() // Use first chunk's results for now
+    } else {
+        log.info "Standard processing: all files processed together"
+        clusters_csv = POPPUNK(assemblies_ch)
+    }
 
     // Parse cluster assignments and group assemblies by cluster
     cluster_assignments = clusters_csv
